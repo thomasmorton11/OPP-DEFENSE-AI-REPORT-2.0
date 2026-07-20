@@ -1,0 +1,49 @@
+# GitHub Actions workflow — replaces Relay's cloud scheduler for free.
+#
+# SETUP:
+#   1. Create a private GitHub repo; add defense_report.py at the root
+#      and this file at .github/workflows/defense_report.yml
+#   2. Repo Settings > Secrets and variables > Actions > New repository secret:
+#        ANTHROPIC_API_KEY    (required for the AI-written report)
+#        GMAIL_APP_PASSWORD   (required for email delivery)
+#        X_BEARER_TOKEN       (optional - enables the tweets layer)
+#   3. Done. Runs daily; report emails itself and is also kept as a
+#      downloadable artifact on each run.
+
+name: Opponent Defense Report
+
+on:
+  schedule:
+    # 11:00 UTC = 7:00 AM Eastern (matches the Relay 7 AM trigger; GitHub
+    # cron is UTC and does not shift for DST - use 12:00 in winter if exact
+    # timing matters)
+    - cron: "0 11 * * *"
+  workflow_dispatch: {}   # allows manual "Run workflow" button for testing
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install anthropic
+
+      - name: Run report
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+        run: python defense_report.py
+
+      - name: Save report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: defense-report
+          path: defense_report_*.html
+          retention-days: 30
