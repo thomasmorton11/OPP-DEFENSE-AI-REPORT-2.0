@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+"""
 BUCKEYE OPPONENT DEFENSE REPORT — standalone port of the Relay workflow
 "A.I OPP. INFO GATHERER" (Relay is shutting down).
 
