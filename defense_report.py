@@ -107,7 +107,8 @@ RULES:
 - Output ONLY the HTML document, nothing else.
 - SUBSTANCE OVER LINKS: every bullet must state the actual information — names, numbers, scheme details, injury specifics, what was said and by whom — drawn from the "article_text" field. Write bullets a coach could act on without clicking anything. The source link is a small trailing citation, never the content itself. If all you can say about an item is its headline, leave it out.
 - Summarize and synthesize in your own words; do not copy passages verbatim.
-- HARD FILTER: content about an opponent's OFFENSE (QB battles, WR/RB/OL news, offensive scheme) must be EXCLUDED entirely unless it directly affects their defense (e.g., a two-way player, an offensive player moving to defense). This report covers defenses only."""
+- HARD FILTER: content about an opponent's OFFENSE (QB battles, WR/RB/OL news, offensive scheme) must be EXCLUDED entirely unless it directly affects their defense (e.g., a two-way player, an offensive player moving to defense). This report covers defenses only.
+- ACCURACY: When naming any coach, coordinator, or player, use ONLY names and job titles exactly as stated in the attached article text. NEVER assign someone a role (e.g., "DC", "defensive coordinator", "head coach") unless the article explicitly states that role for that team right now. If a person's current role is not explicit in the source, refer to them by name only or omit them. Never fill in roles, titles, or affiliations from your own background knowledge — coaching staffs change constantly and your background knowledge may be stale."""
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; DefenseReport/1.0)"}
 
@@ -305,15 +306,33 @@ def fallback_digest(payload, date_str):
 # EMAIL (replaces Relay gmail.sendEmail step)
 # ============================================================
 
-def send_email(subject, html_body):
+def html_to_pdf(html, pdf_path):
+    """Convert the report HTML to PDF. Uses WeasyPrint if available."""
+    try:
+        from weasyprint import HTML as WPHTML
+        WPHTML(string=html).write_pdf(pdf_path)
+        return True
+    except Exception as e:
+        print(f"[warn] PDF conversion failed: {e}")
+        return False
+
+
+def send_email(subject, html_body, pdf_path=None):
     if not GMAIL_APP_PASSWORD:
         print("[info] GMAIL_APP_PASSWORD not set - skipping email, HTML saved to disk")
         return False
-    msg = MIMEMultipart("alternative")
+    msg = MIMEMultipart("mixed")
     msg["Subject"] = subject
     msg["From"] = GMAIL_ADDRESS
     msg["To"] = ", ".join(EMAIL_TO)
     msg.attach(MIMEText(html_body, "html"))
+    if pdf_path and os.path.exists(pdf_path):
+        from email.mime.application import MIMEApplication
+        with open(pdf_path, "rb") as f:
+            part = MIMEApplication(f.read(), _subtype="pdf")
+        part.add_header("Content-Disposition", "attachment",
+                        filename=os.path.basename(pdf_path))
+        msg.attach(part)
     ctx = ssl.create_default_context()
     with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ctx) as s:
         s.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
@@ -348,10 +367,16 @@ def main():
         f.write(html)
     print(f"\nReport saved: {out_path}")
 
+    pdf_path = os.path.join(OUTPUT_DIR, f"defense_report_{now.strftime('%Y-%m-%d')}.pdf")
+    if not html_to_pdf(html, pdf_path):
+        pdf_path = None
+    else:
+        print(f"PDF saved: {pdf_path}")
+
     subject = f"Ohio State 2026 Opponent Defense Report — {date_str}"
     if not ai_worked:
         subject = "[AI STEP FAILED - LINKS ONLY] " + subject
-    if send_email(subject, html):
+    if send_email(subject, html, pdf_path):
         print("Email sent.")
 
 
