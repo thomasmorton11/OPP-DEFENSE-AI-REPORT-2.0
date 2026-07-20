@@ -104,7 +104,8 @@ RULES:
 - For every <a> tag, the href value MUST be the raw URL only, exactly as it appears in the attachment fields, e.g. href="https://x.com/user/status/123". NEVER wrap the URL in markdown link syntax, square brackets, or parentheses inside the href. The href must contain a single clean URL and nothing else.
 - Ignore non-defensive content unless it directly affects the defense (e.g., a DC hire or DL transfer).
 - Keep every opponent section consistent and scannable. Tone: sharp, factual, scout-like — intel, not hype.
-- Output ONLY the HTML document, nothing else."""
+- Output ONLY the HTML document, nothing else.
+- Where a news item includes an "article_text" field, base your bullets on that full article content — specific facts, numbers, quotes, scheme details — not just the headline. Summarize and synthesize in your own words; do not copy passages verbatim."""
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; DefenseReport/1.0)"}
 
@@ -112,28 +113,44 @@ UA = {"User-Agent": "Mozilla/5.0 (compatible; DefenseReport/1.0)"}
 # FETCH LAYER
 # ============================================================
 
+DEFENSE_TERMS = [
+    "defense", "defensive", "coordinator", "linebacker", "cornerback",
+    "safety", "safeties", "edge", "defensive end", "defensive tackle",
+    "defensive line", "secondary", "pass rush", "coverage", "blitz",
+    "scheme", "front", "nickel", "sack", "interception", "tackle",
+    "takeaway", "injury", "depth chart", "transfer",
+]
+
+
+def looks_defensive(*texts):
+    blob = " ".join(t.lower() for t in texts if t)
+    return any(term in blob for term in DEFENSE_TERMS)
+
+
 def fetch_google_news(query, hours=24):
-    """Replaces Relay's Google search step. Last-24h news via Google News RSS."""
-    q = f"{query} when:{hours}h"
-    url = ("https://news.google.com/rss/search?q=" + urllib.parse.quote(q)
-           + "&hl=en-US&gl=US&ceid=US:en")
+    """News via Bing News RSS — returns DIRECT publisher URLs that the
+    article reader can actually open (Google News RSS wraps links in
+    redirects that block scripts, which starved the report of content)."""
+    url = ("https://www.bing.com/news/search?q=" + urllib.parse.quote(query)
+           + "&qft=interval%3d%227%22&format=rss")  # interval 7 = last 24h
     items = []
     try:
         req = urllib.request.Request(url, headers=UA)
         with urllib.request.urlopen(req, timeout=20) as r:
             root = ET.fromstring(r.read())
         for item in root.iter("item"):
-            src = item.find("source")
+            link = (item.findtext("link") or "").strip()
+            link = link.split("&ntb=")[0]  # strip tracking suffix if present
             items.append({
                 "title": (item.findtext("title") or "").strip(),
-                "url": (item.findtext("link") or "").strip(),
+                "url": link,
                 "published": (item.findtext("pubDate") or "").strip(),
                 "snippet": re.sub(r"<[^>]+>", "", (item.findtext("description") or "")).strip(),
-                "source": src.text.strip() if src is not None and src.text else "",
+                "source": urllib.parse.urlparse(link).netloc.replace("www.", ""),
             })
     except Exception as e:
         print(f"  [warn] news fetch failed ({query}): {e}")
-    return items[:25]  # same cap as Relay
+    return items[:25]
 
 
 ARTICLES_TO_READ = 6        # per opponent: how many articles to open and read fully
@@ -162,16 +179,24 @@ def fetch_article_text(url):
 
 
 def enrich_news_with_text(news_items):
-    """Open the top articles and attach their body text."""
-    enriched = 0
+    """Open articles, attach body text, and keep only defense-relevant items.
+    Items whose article couldn't be read AND whose headline/snippet isn't
+    clearly defensive are dropped entirely — no filler links in the report."""
+    kept, enriched = [], 0
     for item in news_items:
-        if enriched >= ARTICLES_TO_READ:
-            break
-        body = fetch_article_text(item["url"])
+        body = ""
+        if enriched < ARTICLES_TO_READ:
+            body = fetch_article_text(item["url"])
         if body:
+            if not looks_defensive(item["title"], item["snippet"], body):
+                continue  # offense/general story — drop it
             item["article_text"] = body
             enriched += 1
-    return news_items
+            kept.append(item)
+        elif looks_defensive(item["title"], item["snippet"]):
+            kept.append(item)  # defensive but unreadable page — keep as lead
+    print(f"   articles read in full: {enriched}")
+    return kept
 
 
 def fetch_tweets(query, hours=24):
@@ -315,5 +340,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
