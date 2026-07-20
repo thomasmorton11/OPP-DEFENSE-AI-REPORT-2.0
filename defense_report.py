@@ -136,6 +136,44 @@ def fetch_google_news(query, hours=24):
     return items[:25]  # same cap as Relay
 
 
+ARTICLES_TO_READ = 6        # per opponent: how many articles to open and read fully
+ARTICLE_CHAR_LIMIT = 4000   # max characters of body text kept per article
+
+
+def fetch_article_text(url):
+    """Follow the article link and extract readable body text so the report
+    is written from the article contents, not just headlines."""
+    try:
+        req = urllib.request.Request(url, headers=UA)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            html = r.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return ""
+    # strip scripts/styles/tags, favor paragraph content
+    html = re.sub(r"(?is)<(script|style|nav|header|footer|aside)[^>]*>.*?</\1>", " ", html)
+    paragraphs = re.findall(r"(?is)<p[^>]*>(.*?)</p>", html)
+    text = " ".join(re.sub(r"<[^>]+>", " ", p) for p in paragraphs)
+    text = re.sub(r"&[a-z#0-9]+;", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    # drop boilerplate-only pages
+    if len(text) < 300:
+        return ""
+    return text[:ARTICLE_CHAR_LIMIT]
+
+
+def enrich_news_with_text(news_items):
+    """Open the top articles and attach their body text."""
+    enriched = 0
+    for item in news_items:
+        if enriched >= ARTICLES_TO_READ:
+            break
+        body = fetch_article_text(item["url"])
+        if body:
+            item["article_text"] = body
+            enriched += 1
+    return news_items
+
+
 def fetch_tweets(query, hours=24):
     """Replaces Relay's Twitter scraping step, via official X API v2 recent search.
     Requires X_BEARER_TOKEN (Basic tier or above). Skipped if not set."""
@@ -257,7 +295,7 @@ def main():
     for opp in OPPONENTS:
         team = opp["Team"]
         print(f"== {team} ==")
-        news = fetch_google_news(opp["Google query"])
+        news = enrich_news_with_text(fetch_google_news(opp["Google query"]))
         tweets = fetch_tweets(opp["Twitter query"])
         insta = fetch_instagram(opp["Instagram hashtag"])
         payload[team] = {"news": news, "tweets": tweets, "instagram": insta}
@@ -277,3 +315,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
