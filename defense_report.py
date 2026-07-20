@@ -105,7 +105,9 @@ RULES:
 - Ignore non-defensive content unless it directly affects the defense (e.g., a DC hire or DL transfer).
 - Keep every opponent section consistent and scannable. Tone: sharp, factual, scout-like — intel, not hype.
 - Output ONLY the HTML document, nothing else.
-- Where a news item includes an "article_text" field, base your bullets on that full article content — specific facts, numbers, quotes, scheme details — not just the headline. Summarize and synthesize in your own words; do not copy passages verbatim."""
+- SUBSTANCE OVER LINKS: every bullet must state the actual information — names, numbers, scheme details, injury specifics, what was said and by whom — drawn from the "article_text" field. Write bullets a coach could act on without clicking anything. The source link is a small trailing citation, never the content itself. If all you can say about an item is its headline, leave it out.
+- Summarize and synthesize in your own words; do not copy passages verbatim.
+- HARD FILTER: content about an opponent's OFFENSE (QB battles, WR/RB/OL news, offensive scheme) must be EXCLUDED entirely unless it directly affects their defense (e.g., a two-way player, an offensive player moving to defense). This report covers defenses only."""
 
 UA = {"User-Agent": "Mozilla/5.0 (compatible; DefenseReport/1.0)"}
 
@@ -260,13 +262,23 @@ def write_report_with_claude(payload, date_str):
         return None
     client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
     prompt = REPORT_PROMPT.replace("{date}", date_str)
-    msg = client.messages.create(
-        model=CLAUDE_MODEL,
-        max_tokens=8000,
-        messages=[{"role": "user", "content":
-                   prompt + "\n\n=== ATTACHED DATA (last 24 hours) ===\n"
-                   + json.dumps(payload, indent=1)}],
-    )
+    try:
+        msg = client.messages.create(
+            model=CLAUDE_MODEL,
+            max_tokens=8000,
+            messages=[{"role": "user", "content":
+                       prompt + "\n\n=== ATTACHED DATA (last 24 hours) ===\n"
+                       + json.dumps(payload, indent=1)}],
+        )
+    except Exception as e:
+        print("=" * 60)
+        print("[ERROR] Claude API call FAILED - falling back to link digest.")
+        print(f"[ERROR] Reason: {e}")
+        print("[ERROR] Common causes: wrong/expired API key in the")
+        print("[ERROR] ANTHROPIC_API_KEY secret, or $0 credit balance")
+        print("[ERROR] at console.anthropic.com > Billing.")
+        print("=" * 60)
+        return None
     html = "".join(b.text for b in msg.content if b.type == "text").strip()
     html = re.sub(r"^```(?:html)?|```$", "", html).strip()
     return html if html.lower().startswith(("<!doctype", "<html", "<table")) else html
@@ -326,7 +338,10 @@ def main():
         payload[team] = {"news": news, "tweets": tweets, "instagram": insta}
         print(f"   news: {len(news)}  tweets: {len(tweets)}  instagram: {len(insta)}")
 
-    html = write_report_with_claude(payload, date_str) or fallback_digest(payload, date_str)
+    html = write_report_with_claude(payload, date_str)
+    ai_worked = html is not None
+    if not ai_worked:
+        html = fallback_digest(payload, date_str)
 
     out_path = os.path.join(OUTPUT_DIR, f"defense_report_{now.strftime('%Y-%m-%d')}.html")
     with open(out_path, "w", encoding="utf-8") as f:
@@ -334,6 +349,8 @@ def main():
     print(f"\nReport saved: {out_path}")
 
     subject = f"Ohio State 2026 Opponent Defense Report — {date_str}"
+    if not ai_worked:
+        subject = "[AI STEP FAILED - LINKS ONLY] " + subject
     if send_email(subject, html):
         print("Email sent.")
 
