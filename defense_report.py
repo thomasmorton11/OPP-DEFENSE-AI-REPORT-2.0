@@ -45,6 +45,7 @@ from email.mime.text import MIMEText
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 X_BEARER_TOKEN = os.environ.get("X_BEARER_TOKEN", "")          # optional
+YOUTUBE_API_KEY = os.environ.get("YOUTUBE_API_KEY", "")        # optional; free key enables practice-video layer
 GMAIL_ADDRESS = "thomasmorton44@gmail.com"
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "")  # optional
 EMAIL_TO = ["thomasmorton44@gmail.com"]
@@ -95,9 +96,10 @@ STRUCTURE:
    - If a real quote exists, a blockquote: italic, with a scarlet left border (3px solid #BB0000), light-gray background, padding 8px 12px — "quote" — Name, role.
    - A "Sources:" line in small (12px) gray text with scarlet links separated by ·.
    - Separate opponent sections with a 1px solid #DDDDDD horizontal divider.
-6. "DEFENSES TO WATCH" closing block (same scarlet-accented box style as Top Storylines): 2–3 opponent defenses with the most momentum, one line each.
-7. For opponents with no meaningful defensive news, do NOT make a section — list them at the bottom in small gray text: "Quiet today: Team A, Team B, Team C."
-8. Footer: centered small (11px) gray text: "Go Bucks — automated daily defensive intel • Sources linked inline."
+6. "PRACTICE FILM" block: after the opponent sections, a section (same scarlet-accented box style) listing every item from the "practice_videos" fields across all opponents. For each video: opponent name in bold, then the video title as a scarlet link to its URL, then channel/account and date in small gray text, then one line on why it's worth watching if the title/description indicates defensive content (e.g., "team period vs. air, LB drops visible"). Include ALL videos found — practice film is high value even when the title is vague. If no videos were found for any opponent, state "No new practice video surfaced today." in small gray text.
+7. "DEFENSES TO WATCH" closing block (same scarlet-accented box style as Top Storylines): 2–3 opponent defenses with the most momentum, one line each.
+8. For opponents with no meaningful defensive news, do NOT make a section — list them at the bottom in small gray text: "Quiet today: Team A, Team B, Team C."
+9. Footer: centered small (11px) gray text: "Go Bucks — automated daily defensive intel • Sources linked inline."
 
 RULES:
 - Only use real content from the attachments. Never invent news, quotes, or links.
@@ -200,6 +202,45 @@ def enrich_news_with_text(news_items):
             kept.append(item)  # defensive but unreadable page — keep as lead
     print(f"   articles read in full: {enriched}")
     return kept
+
+
+def fetch_youtube_videos(team_name, days=3):
+    """Practice/camp video via the official (free) YouTube Data API v3.
+    Requires YOUTUBE_API_KEY. Searches the last few days since video posts
+    are sparser than articles. Get a free key: console.cloud.google.com ->
+    create project -> enable 'YouTube Data API v3' -> Credentials -> API key."""
+    if not YOUTUBE_API_KEY:
+        return []
+    published_after = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    videos, seen_ids = [], set()
+    for q in (f"{team_name} football practice", f"{team_name} football fall camp"):
+        params = urllib.parse.urlencode({
+            "part": "snippet", "q": q, "type": "video", "order": "date",
+            "publishedAfter": published_after, "maxResults": 10,
+            "key": YOUTUBE_API_KEY,
+        })
+        try:
+            req = urllib.request.Request(
+                "https://www.googleapis.com/youtube/v3/search?" + params, headers=UA)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = json.loads(r.read())
+        except Exception as e:
+            print(f"  [warn] YouTube fetch failed ({q}): {e}")
+            continue
+        for it in data.get("items", []):
+            vid = it.get("id", {}).get("videoId")
+            sn = it.get("snippet", {})
+            if not vid or vid in seen_ids:
+                continue
+            seen_ids.add(vid)
+            videos.append({
+                "title": sn.get("title", ""),
+                "channel": sn.get("channelTitle", ""),
+                "published": sn.get("publishedAt", ""),
+                "description": sn.get("description", ""),
+                "url": f"https://www.youtube.com/watch?v={vid}",
+            })
+    return videos[:10]
 
 
 def fetch_tweets(query, hours=24):
@@ -353,9 +394,12 @@ def main():
         print(f"== {team} ==")
         news = enrich_news_with_text(fetch_google_news(opp["Google query"]))
         tweets = fetch_tweets(opp["Twitter query"])
+        video_tweets = fetch_tweets(f'{opp["Twitter query"]} practice has:videos') if X_BEARER_TOKEN else []
+        videos = fetch_youtube_videos(opp["Team"])
         insta = fetch_instagram(opp["Instagram hashtag"])
-        payload[team] = {"news": news, "tweets": tweets, "instagram": insta}
-        print(f"   news: {len(news)}  tweets: {len(tweets)}  instagram: {len(insta)}")
+        payload[team] = {"news": news, "tweets": tweets,
+                         "practice_videos": videos + video_tweets, "instagram": insta}
+        print(f"   news: {len(news)}  tweets: {len(tweets)}  videos: {len(videos) + len(video_tweets)}  instagram: {len(insta)}")
 
     html = write_report_with_claude(payload, date_str)
     ai_worked = html is not None
