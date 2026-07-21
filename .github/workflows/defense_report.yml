@@ -32,18 +32,23 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: pip install anthropic
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq libpango-1.0-0 libpangocairo-1.0-0
+          pip install anthropic weasyprint
 
       - name: Run report
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           X_BEARER_TOKEN: ${{ secrets.X_BEARER_TOKEN }}
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
         run: python defense_report.py
 
       - name: Save report artifact
         uses: actions/upload-artifact@v4
         with:
           name: defense-report
-          path: defense_report_*.html
+          path: |
+            defense_report_*.html
+            defense_report_*.pdf
           retention-days: 30
